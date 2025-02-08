@@ -1,134 +1,149 @@
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel, HttpUrl
-from typing import List, Optional
-from datetime import datetime
-import os
-from dotenv import load_dotenv
-import bcrypt
-from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import FastAPI, HTTPException, Depends, Header
+from pydantic import BaseModel
+from datetime import datetime, timedelta
 import json
+import os
+import bcrypt
+import jwt
+from dotenv import load_dotenv
+
+# Path untuk kredensial admin
+env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "creds/.secrets.env"))
+load_dotenv(env_path)
+
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD")
+
+SECRET_KEY = "supersecretkey"
+ALGORITHM = "HS256"
+TOKEN_EXPIRATION_MINUTES = 60
 
 app = FastAPI()
 
-# Load environment variables from .secrets.env
-load_dotenv(dotenv_path="creds/.secrets.env")
+# Path untuk menyimpan database
+DB_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data/articles_db.json"))
 
-# Data model for an article
+# Model untuk artikel
 class Article(BaseModel):
+    id: str
     title: str
-    url: HttpUrl
-    created_at: datetime = None
-    updated_at: datetime = None
-    status: str = "unpublished"  # Default status
-    user_id: str = None  # User ID who created or updated the article (only for Admin)
-    publish_at: Optional[datetime] = None  # Scheduled publish time
-    unpublish_at: Optional[datetime] = None  # Scheduled unpublish time
+    url: str
+    status: str
+    publish_at: datetime
+    unpublish_at: datetime
 
-# In-memory database (just for development)
-articles_db: List[Article] = []
+class CreateArticleRequest(BaseModel):
+    title: str
+    url: str
+    status: str
+    publish_at: datetime = None
 
-# Data model for a user
-class User(BaseModel):
-    user_id: str
-    role: str
+class UpdateArticleRequest(BaseModel):
+    title: str = None
+    url: str = None
+    status: str = None
+    publish_at: datetime = None
 
-# Load admin user from environment variables
-admin_user_id = os.getenv("ADMIN_USER_ID")
-admin_password = os.getenv("ADMIN_PASSWORD")
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-# In-memory user database (just for development)
-users_db = {
-    admin_user_id: User(user_id=admin_user_id, role="Admin")
-}
+# Fungsi membaca database
+def load_articles():
+    if not os.path.exists(DB_FILE):
+        return []
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
 
-# Dependency to get the current user (for simplicity, we use a fixed user ID)
-def get_current_user():
-    return users_db[admin_user_id]  # Replace with actual user retrieval logic
+# Fungsi menyimpan database
+def save_articles(articles):
+    with open(DB_FILE, "w") as f:
+        json.dump(articles, f, indent=4)
 
-# Dependency to check if the current user is an Admin
-def get_current_admin_user(user: User = Depends(get_current_user)):
-    if user.role != "Admin":
-        raise HTTPException(status_code=403, detail="Operation not permitted")
-    return user
+# Fungsi membuat JWT token
+def create_token(username: str):
+    expiration = datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRATION_MINUTES)
+    payload = {"sub": username, "exp": expiration}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-# Scheduler for background tasks
-scheduler = BackgroundScheduler()
-scheduler.start()
+# Middleware untuk verifikasi admin
+def verify_admin(username: str, password: str):
+    if username != ADMIN_USER_ID or not bcrypt.checkpw(password.encode(), ADMIN_PASSWORD_HASH.encode()):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return True
 
-def check_article_status():
-    now = datetime.utcnow()
-    for article in articles_db:
-        if article.publish_at and article.publish_at <= now and article.status == "unpublished":
-            article.status = "published"
-            article.updated_at = now
-        if article.unpublish_at and article.unpublish_at <= now and article.status == "published":
-            article.status = "unpublished"
-            article.updated_at = now
+# Middleware untuk autentikasi token
+def get_current_admin(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
 
-# Add job to scheduler to run every minute
-scheduler.add_job(check_article_status, 'interval', minutes=1)
-
-def save_articles_to_file():
-    with open("data/articles_db.json", "w") as file:
-        json.dump([article.dict() for article in articles_db], file, default=str)
-
-def load_articles_from_file():
-    global articles_db
+    token = authorization.split(" ")[1]
     try:
-        with open("data/articles_db.json", "r") as file:
-            articles_data = json.load(file)
-            articles_db = [Article(**article) for article in articles_data]
-    except FileNotFoundError:
-        articles_db = []
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload["sub"]
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-@app.on_event("startup")
-def on_startup():
-    load_articles_from_file()
+# Endpoint login (Menghasilkan token)
+@app.post("/login")
+def login(login_data: LoginRequest):
+    verify_admin(login_data.username, login_data.password)
+    token = create_token(login_data.username)
+    return {"access_token": token}
 
-@app.on_event("shutdown")
-def on_shutdown():
-    save_articles_to_file()
-
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Article API"}
-
-@app.get("/articles", response_model=List[Article])
+# Endpoint mendapatkan artikel yang dipublish (tanpa autentikasi)
+@app.get("/articles")
 def get_articles():
-    # Return only published articles
-    return [article for article in articles_db if article.status == "published"]
+    articles = load_articles()
+    published_articles = [a for a in articles if a["status"] == "published"]
+    return published_articles
 
-@app.post("/articles", status_code=201)
-def add_article(article: Article, user: User = Depends(get_current_admin_user)):
-    # Check for duplicate URL
-    for existing_article in articles_db:
-        if existing_article.url == article.url:
-            raise HTTPException(status_code=400, detail="Article with this URL already exists")
-    article.created_at = datetime.utcnow()
-    article.updated_at = datetime.utcnow()
-    article.user_id = user.user_id
-    articles_db.append(article)
-    return {"message": "Article added successfully", "article": article}
+# Endpoint menambahkan artikel (Perlu autentikasi)
+@app.post("/articles")
+def add_article(article: CreateArticleRequest, username: str = Depends(get_current_admin)):
+    articles = load_articles()
+    article_id = str(len(articles) + 1)
 
-@app.put("/articles/{article_url}", response_model=Article)
-def update_article(article_url: HttpUrl, updated_article: Article, user: User = Depends(get_current_admin_user)):
-    for article in articles_db:
-        if article.url == article_url:
-            article.title = updated_article.title
-            article.updated_at = datetime.utcnow()
-            article.status = updated_article.status
-            article.user_id = user.user_id
-            article.publish_at = updated_article.publish_at
-            article.unpublish_at = updated_article.unpublish_at
+    if article.status == "published":
+        publish_at = article.publish_at or datetime.utcnow()
+        unpublish_at = publish_at + timedelta(days=36500)  # 100 tahun
+    else:
+        publish_at = datetime.utcnow()
+        unpublish_at = datetime.utcnow()
+
+    new_article = {
+        "id": article_id,
+        "title": article.title,
+        "url": article.url,
+        "status": article.status,
+        "publish_at": publish_at.isoformat(),
+        "unpublish_at": unpublish_at.isoformat()
+    }
+
+    articles.append(new_article)
+    save_articles(articles)
+    return new_article
+
+# Endpoint update artikel (Perlu autentikasi)
+@app.put("/articles/{article_id}")
+def update_article(article_id: str, update_data: UpdateArticleRequest, username: str = Depends(get_current_admin)):
+    articles = load_articles()
+    for article in articles:
+        if article["id"] == article_id:
+            if update_data.title:
+                article["title"] = update_data.title
+            if update_data.url:
+                article["url"] = update_data.url
+            if update_data.status:
+                article["status"] = update_data.status
+                if update_data.status == "published":
+                    article["publish_at"] = (update_data.publish_at or datetime.utcnow()).isoformat()
+                    article["unpublish_at"] = (datetime.utcnow() + timedelta(days=36500)).isoformat()
+                else:
+                    article["unpublish_at"] = datetime.utcnow().isoformat()
+            save_articles(articles)
             return article
-    raise HTTPException(status_code=404, detail="Article not found")
 
-@app.put("/articles/{article_url}/status", response_model=Article)
-def update_article_status(article_url: HttpUrl, status: str, user: User = Depends(get_current_admin_user)):
-    for article in articles_db:
-        if article.url == article_url:
-            article.status = status
-            article.updated_at = datetime.utcnow()
-            article.user_id = user.user_id
-            return article
     raise HTTPException(status_code=404, detail="Article not found")
