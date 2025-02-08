@@ -1,3 +1,8 @@
+# ignore database
 data/articles_db.json
+
+# ignore secrets
 creds/.secrets.env
+
+# ignore cache
 backend/__pycache__/
