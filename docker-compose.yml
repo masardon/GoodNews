@@ -1,0 +1,29 @@
+services:
+  goodnews:
+    image: masardon/goodnews:alpha
+    ports:
+      - "8000:8000"
+    volumes:
+      - /opt/data:/app/data
+      - /opt/creds:/app/creds
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  logdy:
+    image: rickraven/logdy:0.14.0
+    restart: always
+    ports:
+      - "9000:9000"
+      - "10800:10800"
+      - "10900:10900"
+      - "11000:11000"
+    environment:
+      LOGDY_PASS: "mypassword"
+      LOGDY_MODE: "socket"
+      LOGDY_SOCKET_PORTS: "10800 10900 11000"
+      LOGDY_PORT: "9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
