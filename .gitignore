@@ -1,0 +1,3 @@
+data/articles_db.json
+creds/.secrets.env
+backend/__pycache__/
