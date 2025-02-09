@@ -1,5 +1,11 @@
 # Use a Python base image
-FROM python:3.9
+FROM python:3.13-slim-bookworm
+
+# Upgrade Packages and Dependencies
+RUN apt-get update && apt-get dist-upgrade -y
+RUN pip install --upgrade setuptools
+RUN pip install --upgrade pip
+RUN apt-get clean
 
 # Set the working directory inside the container
 WORKDIR /app
