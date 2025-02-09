@@ -7,7 +7,7 @@ Untuk saat ini, aplikasi ini memiliki frontend untuk iOS yang dibangun menggunak
 
 ### Lisensi
 _Siapa pun bebas untuk mengklon dan berkontribusi dalam pengembangan aplikasi ini demi kemanfaatannya bagi pengguna. Namun, publikasi aplikasi ini di toko aplikasi mana pun dengan nama "Kabar Baik" secara eksklusif hanya menjadi hak dari kreator. 
-Dengan mengunduh, menggunakan, atau berkontribusi pada aplikasi ini, Anda dianggap telah memahami dan menyetujui ketentuan ini, terlepas dari adanya perjanjian hukum tertulis._
+Dengan mengunduh, menggunakan, atau berkontribusi pada aplikasi ini, Anda dianggap telah memahami dan menyetujui ketentuan ini, terlepas dari ada atau tidaknya perjanjian hukum tertulis._
 
 ### Cara penggunaan
 1. Clone Repository
